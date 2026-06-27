@@ -331,7 +331,7 @@ body.diseno-division .solo-division-th{display:table-cell;}
 /* ============================================================
    CONFIGURACIÓN — pega aquí la URL de tu Apps Script desplegado
    ============================================================ */
-const API_URL = "https://script.google.com/macros/s/AKfycbyEthQJfTKujwIbldMyKrs3NRUzMak20BqByHWyWJXrigrRj0HrN2rST8gmJvu57WFn/exec";
+const API_URL = "PEGA_AQUI_TU_URL_DE_APPS_SCRIPT";
  
 /* Catálogo fijo de trimestres LPGS (estructura curricular, cambia poco) */
 const TRIMESTRES_LPGS = [
@@ -470,43 +470,69 @@ function renderGrupos(){
   cont.innerHTML = html || `<div class="panel" style="text-align:center; color:var(--gris);">Define cuántos grupos hay por trimestre arriba para empezar a capturar.</div>`;
 }
  
-/* ---------------- DETECCIÓN DE EMPALMES DE HORARIO POR DOCENTE ---------------- */
+/* ---------------- DETECCIÓN DE EMPALMES DE HORARIO ---------------- */
 function seTraslapanHorarios(iniA, finA, iniB, finB){
   // Formato "HH:MM" de ancho fijo: la comparación de cadenas equivale a comparar la hora.
   return iniA < finB && iniB < finA;
 }
  
 function calcularConflictosHorario(){
-  const plano = [];
+  const conflictos = {}; // id del componente -> { L:"mensaje", M:"mensaje", ... }
+ 
+  function agregarAviso(id, dia, mensaje){
+    if (!conflictos[id]) conflictos[id] = {};
+    conflictos[id][dia] = conflictos[id][dia] ? conflictos[id][dia] + " · " + mensaje : mensaje;
+  }
+ 
+  // ---- A) Mismo profesor en distintos grupos/trimestres con horarios que se traslapan ----
+  const planoProfesores = [];
   TRIMESTRES_LPGS.forEach(t => {
     state.trimestres[t.trim].grupos.forEach(g => {
       g.componentes.forEach(c => {
         if (c.numEcon && c.numEcon.trim()){
-          plano.push({ id:c.id, numEcon:c.numEcon.trim(), claveGrupo:g.claveGrupo, trimLabel:t.label, horario:c.horario });
+          planoProfesores.push({ id:c.id, numEcon:c.numEcon.trim(), claveGrupo:g.claveGrupo, trimLabel:t.label, horario:c.horario });
         }
       });
     });
   });
- 
-  const conflictos = {}; // id del componente -> { L:"mensaje", M:"mensaje", ... }
- 
-  for (let i = 0; i < plano.length; i++){
-    for (let j = i+1; j < plano.length; j++){
-      const A = plano[i], B = plano[j];
+  for (let i = 0; i < planoProfesores.length; i++){
+    for (let j = i+1; j < planoProfesores.length; j++){
+      const A = planoProfesores[i], B = planoProfesores[j];
       if (A.numEcon !== B.numEcon) continue;
       DIAS.forEach(d => {
         const hA = A.horario[d.key], hB = B.horario[d.key];
         if (hA.tipo === "sin_clase" || hB.tipo === "sin_clase") return;
         if (!hA.inicio || !hA.fin || !hB.inicio || !hB.fin) return;
         if (seTraslapanHorarios(hA.inicio, hA.fin, hB.inicio, hB.fin)){
-          if (!conflictos[A.id]) conflictos[A.id] = {};
-          if (!conflictos[B.id]) conflictos[B.id] = {};
-          conflictos[A.id][d.key] = `Empalma con ${B.claveGrupo} (${B.trimLabel}), mismo profesor`;
-          conflictos[B.id][d.key] = `Empalma con ${A.claveGrupo} (${A.trimLabel}), mismo profesor`;
+          agregarAviso(A.id, d.key, `Empalma con ${B.claveGrupo} (${B.trimLabel}), mismo profesor`);
+          agregarAviso(B.id, d.key, `Empalma con ${A.claveGrupo} (${A.trimLabel}), mismo profesor`);
         }
       });
     }
   }
+ 
+  // ---- B) Dentro de un MISMO grupo: dos componentes no pueden coincidir en horario,
+  //         sin importar el profesor, porque son los mismos alumnos. ----
+  TRIMESTRES_LPGS.forEach(t => {
+    state.trimestres[t.trim].grupos.forEach(g => {
+      const comps = g.componentes;
+      for (let i = 0; i < comps.length; i++){
+        for (let j = i+1; j < comps.length; j++){
+          const A = comps[i], B = comps[j];
+          DIAS.forEach(d => {
+            const hA = A.horario[d.key], hB = B.horario[d.key];
+            if (hA.tipo === "sin_clase" || hB.tipo === "sin_clase") return;
+            if (!hA.inicio || !hA.fin || !hB.inicio || !hB.fin) return;
+            if (seTraslapanHorarios(hA.inicio, hA.fin, hB.inicio, hB.fin)){
+              agregarAviso(A.id, d.key, `Ya hay clase de "${B.compModulo || 'otro componente'}" en este horario (mismo grupo)`);
+              agregarAviso(B.id, d.key, `Ya hay clase de "${A.compModulo || 'otro componente'}" en este horario (mismo grupo)`);
+            }
+          });
+        }
+      }
+    });
+  });
+ 
   return conflictos;
 }
  
@@ -1134,4 +1160,3 @@ if (API_URL && !API_URL.startsWith("PEGA_AQUI")){
 </script>
 </body>
 </html>
- 
